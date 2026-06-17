@@ -94,13 +94,16 @@ export default function PrestamosPage() {
         .order('id_prestamo', { ascending: false })
 
       if (errP) throw errP
-      setPrestamos(dataPrestamos || [])
+      // FIX TYPESCRIPT: Agregado el "as any" para evitar el error de tipado estricto
+      setPrestamos((dataPrestamos as any) || [])
 
       const { data: dataLibros } = await supabase.from('libros').select('id_libro, titulo, autor, cant_disponible')
-      setLibros(dataLibros || [])
+      // FIX TYPESCRIPT: Agregado el "as any"
+      setLibros((dataLibros as any) || [])
 
       const { data: dataSocios } = await supabase.from('socios').select('id_socio, nombre, apellido, dni, estado_socio')
-      setSocios(dataSocios || [])
+      // FIX TYPESCRIPT: Agregado el "as any"
+      setSocios((dataSocios as any) || [])
 
     } catch (error) {
       console.error(error)

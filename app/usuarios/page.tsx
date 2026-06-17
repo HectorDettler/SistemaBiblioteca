@@ -140,7 +140,7 @@ export default async function UsuariosPage() {
 
                             {/* Si el ID de la fila no es igual a tu ID logueado, muestra el botón */}
                             {userTable.id !== miUsuarioId && (
-                              <form action={actionBindeada}>
+                              <form action={actionBindeada as any}>
                                 <button
                                   type="submit"
                                   title={userTable.activo ? "Dar de baja usuario" : "Activar usuario"}
