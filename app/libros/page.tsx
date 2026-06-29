@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   Plus, BookX, Loader2, X, BookOpen, User, Hash, 
   Folder, Layers, Search, Trash2, ChevronLeft, ChevronRight,
-  ArrowUpDown, ChevronUp, ChevronDown
+  ArrowUpDown, ChevronUp, ChevronDown, PlusCircle
 } from 'lucide-react'
 
 interface Libro {
@@ -77,6 +77,26 @@ export default function LibrosPage() {
     if (!window.confirm(`¿Seguro que querés eliminar "${tituloLibro}"?`)) return
     const { error } = await supabase.from('libros').delete().eq('id_libro', id)
     if (!error) obtenerLibros()
+  }
+
+  // NUEVA FUNCIÓN: Sumar 1 ejemplar al stock
+  async function manejarSumarStock(libro: Libro) {
+    if (!window.confirm(`¿Querés sumar 1 ejemplar al stock de "${libro.titulo}"?`)) return
+    
+    // Le sumamos 1 al stock total, y 1 a la cantidad disponible en estante
+    const { error } = await supabase
+      .from('libros')
+      .update({
+        cant_total: libro.cant_total + 1,
+        cant_disponible: libro.cant_disponible + 1
+      })
+      .eq('id_libro', libro.id_libro)
+      
+    if (error) {
+      alert(`Error al actualizar el stock: ${error.message}`)
+    } else {
+      obtenerLibros() // Refresca la tabla automáticamente
+    }
   }
 
   const alternarOrden = (columna: 'titulo' | 'categoria') => {
@@ -180,7 +200,25 @@ export default function LibrosPage() {
                     <td className="p-4 text-slate-600 font-mono text-xs font-semibold">{libro.isbn || <span className="font-sans italic text-slate-400 font-normal">Sin código</span>}</td>
                     <td className="p-4 text-center"><span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">{libro.cant_disponible} / {libro.cant_total}</span></td>
                     <td className="p-4 text-center">
-                      <button onClick={() => manejarEliminarLibro(libro.id_libro, libro.titulo)} className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors"><Trash2 className="w-4 h-4" /></button>
+                      <div className="flex items-center justify-center gap-2">
+                        {/* BOTÓN PARA SUMAR STOCK */}
+                        <button 
+                          onClick={() => manejarSumarStock(libro)} 
+                          title="Aumentar cantidad de ejemplares"
+                          className="text-emerald-500 hover:text-emerald-700 p-2 rounded-lg hover:bg-emerald-50 transition-colors"
+                        >
+                          <PlusCircle className="w-4 h-4" />
+                        </button>
+                        
+                        {/* BOTÓN ORIGINAL PARA ELIMINAR */}
+                        <button 
+                          onClick={() => manejarEliminarLibro(libro.id_libro, libro.titulo)} 
+                          title="Eliminar libro"
+                          className="text-red-500 hover:text-red-700 p-2 rounded-lg hover:bg-red-50 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
