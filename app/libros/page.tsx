@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   Plus, BookX, Loader2, X, BookOpen, User, Hash, 
   Folder, Layers, Search, Trash2, ChevronLeft, ChevronRight,
-  ArrowUpDown, ChevronUp, ChevronDown, PlusCircle
+  ArrowUpDown, ChevronUp, ChevronDown, Pencil
 } from 'lucide-react'
 
 interface Libro {
@@ -24,16 +24,15 @@ export default function LibrosPage() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [guardando, setGuardando] = useState(false)
 
+  // ESTADO NUEVO: Saber si estamos editando un libro existente
+  const [libroEditando, setLibroEditando] = useState<Libro | null>(null)
+
+  // Estados del formulario
   const [titulo, setTitulo] = useState('')
   const [autor, setAutor] = useState('')
   const [isbn, setIsbn] = useState('')
   const [categoria, setCategoria] = useState('')
   const [cantidadTotal, setCantidadTotal] = useState(1)
-
-  // NUEVOS ESTADOS: Para controlar el modal de actualización de stock masivo
-  const [libroParaStock, setLibroParaStock] = useState<Libro | null>(null)
-  const [cantidadParaAgregar, setCantidadParaAgregar] = useState<number>(1)
-  const [actualizandoStock, setActualizandoStock] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
   const [ordenarPor, setOrdenarPor] = useState<'titulo' | 'categoria'>('titulo')
@@ -54,27 +53,89 @@ export default function LibrosPage() {
 
   useEffect(() => { obtenerLibros() }, [])
 
+  // Función para abrir el modal limpio (Nuevo Libro)
+  const abrirModalNuevo = () => {
+    setLibroEditando(null)
+    setTitulo('')
+    setAutor('')
+    setIsbn('')
+    setCategoria('')
+    setCantidadTotal(1)
+    setIsModalOpen(true)
+  }
+
+  // Función para abrir el modal con datos (Editar Libro)
+  const abrirModalEdicion = (libro: Libro) => {
+    setLibroEditando(libro)
+    setTitulo(libro.titulo)
+    setAutor(libro.autor || '')
+    setIsbn(libro.isbn || '')
+    setCategoria(libro.categoria || '')
+    setCantidadTotal(libro.cant_total)
+    setIsModalOpen(true)
+  }
+
+  // Función unificada para Guardar (Sirve para Crear y para Actualizar)
   async function manejarGuardarLibro(e: React.FormEvent) {
     e.preventDefault()
     if (!titulo.trim()) return alert('El título es obligatorio.')
+    
+    const cantNum = Number(cantidadTotal)
+    if (cantNum < 1) return alert('La cantidad total debe ser al menos 1.')
+
     setGuardando(true)
 
-    const nuevoLibro = {
-      titulo: titulo.trim(),
-      autor: autor.trim() || null,
-      isbn: isbn.trim() || null,
-      categoria: categoria.trim() || null,
-      cant_total: Number(cantidadTotal),
-      cant_disponible: Number(cantidadTotal),
-    }
+    if (libroEditando) {
+      // --- LÓGICA DE ACTUALIZACIÓN ---
+      // Calculamos cómo afecta el cambio de stock total al stock disponible
+      const diferenciaStock = cantNum - libroEditando.cant_total
+      const nuevaCantDisponible = libroEditando.cant_disponible + diferenciaStock
 
-    const { error } = await supabase.from('libros').insert([nuevoLibro])
-    if (error) {
-      alert(`Error: ${error.message}`)
+      // Validación de seguridad: No se puede reducir el stock total por debajo de los libros ya prestados
+      if (nuevaCantDisponible < 0) {
+        setGuardando(false)
+        return alert(`¡Operación no permitida!\n\nActualmente hay ${libroEditando.cant_total - libroEditando.cant_disponible} ejemplares prestados.\nNo puedes reducir el inventario total por debajo de esa cantidad.`)
+      }
+
+      const libroActualizado = {
+        titulo: titulo.trim(),
+        autor: autor.trim() || null,
+        isbn: isbn.trim() || null,
+        categoria: categoria.trim() || null,
+        cant_total: cantNum,
+        cant_disponible: nuevaCantDisponible,
+      }
+
+      const { error } = await supabase
+        .from('libros')
+        .update(libroActualizado)
+        .eq('id_libro', libroEditando.id_libro)
+
+      if (error) alert(`Error: ${error.message}`)
+      else {
+        setIsModalOpen(false)
+        obtenerLibros()
+      }
+
     } else {
-      setTitulo(''); setAutor(''); setIsbn(''); setCategoria(''); setCantidadTotal(1); setIsModalOpen(false)
-      obtenerLibros()
+      // --- LÓGICA DE CREACIÓN (COMO ESTABA ANTES) ---
+      const nuevoLibro = {
+        titulo: titulo.trim(),
+        autor: autor.trim() || null,
+        isbn: isbn.trim() || null,
+        categoria: categoria.trim() || null,
+        cant_total: cantNum,
+        cant_disponible: cantNum,
+      }
+
+      const { error } = await supabase.from('libros').insert([nuevoLibro])
+      if (error) alert(`Error: ${error.message}`)
+      else {
+        setIsModalOpen(false)
+        obtenerLibros()
+      }
     }
+    
     setGuardando(false)
   }
 
@@ -82,35 +143,6 @@ export default function LibrosPage() {
     if (!window.confirm(`¿Seguro que querés eliminar "${tituloLibro}"?`)) return
     const { error } = await supabase.from('libros').delete().eq('id_libro', id)
     if (!error) obtenerLibros()
-  }
-
-  // NUEVA FUNCIÓN: Procesa el aumento de stock ingresado en el nuevo modal personalizado
-  async function manejarActualizarStock(e: React.FormEvent) {
-    e.preventDefault()
-    if (!libroParaStock) return
-    if (cantidadParaAgregar < 1) return alert('La cantidad debe ser mayor o igual a 1.')
-
-    setActualizandoStock(true)
-    try {
-      const { error } = await supabase
-        .from('libros')
-        .update({
-          cant_total: libroParaStock.cant_total + cantidadParaAgregar,
-          cant_disponible: libroParaStock.cant_disponible + cantidadParaAgregar
-        })
-        .eq('id_libro', libroParaStock.id_libro)
-
-      if (error) {
-        alert(`Error al actualizar el stock: ${error.message}`)
-      } else {
-        setLibroParaStock(null) // Cierra el modal
-        obtenerLibros() // Refresca los datos en pantalla
-      }
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setActualizandoStock(false)
-    }
   }
 
   const alternarOrden = (columna: 'titulo' | 'categoria') => {
@@ -150,7 +182,7 @@ export default function LibrosPage() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Catálogo de Libros</h1>
           <p className="text-sm text-slate-500 mt-0.5">Control de inventario, stock y clasificación.</p>
         </div>
-        <button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-5 rounded-lg transition-all shadow-sm active:scale-95">
+        <button onClick={abrirModalNuevo} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 px-5 rounded-lg transition-all shadow-sm active:scale-95">
           <Plus className="w-5 h-5" /> Nuevo Libro
         </button>
       </div>
@@ -215,13 +247,13 @@ export default function LibrosPage() {
                     <td className="p-4 text-center"><span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">{libro.cant_disponible} / {libro.cant_total}</span></td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        {/* ACCIÓN REFACTORIZADA: Ahora abre el modal interactivo en lugar del confirm de Windows */}
+                        {/* BOTÓN DE EDICIÓN UNIFICADO */}
                         <button 
-                          onClick={() => { setLibroParaStock(libro); setCantidadParaAgregar(1); }} 
-                          title="Aumentar cantidad de ejemplares"
-                          className="text-emerald-500 hover:text-emerald-700 p-2 rounded-lg hover:bg-emerald-50 transition-colors cursor-pointer"
+                          onClick={() => abrirModalEdicion(libro)} 
+                          title="Editar detalles o modificar stock"
+                          className="text-blue-500 hover:text-blue-700 p-2 rounded-lg hover:bg-blue-50 transition-colors cursor-pointer"
                         >
-                          <PlusCircle className="w-4 h-4" />
+                          <Pencil className="w-4 h-4" />
                         </button>
                         
                         <button 
@@ -251,12 +283,14 @@ export default function LibrosPage() {
         </div>
       )}
 
-      {/* MODAL ORIGINAL: REGISTRAR NUEVO LIBRO */}
+      {/* MODAL INTELIGENTE (Sirve para Crear y para Editar) */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl shadow-xl border border-slate-300 w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between bg-slate-100 p-4 border-b border-slate-300">
-              <h2 className="text-lg font-black text-slate-900">Registrar Nuevo Libro</h2>
+              <h2 className="text-lg font-black text-slate-900">
+                {libroEditando ? 'Editar Libro' : 'Registrar Nuevo Libro'}
+              </h2>
               <button type="button" onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200"><X className="w-5 h-5" /></button>
             </div>
             <form onSubmit={manejarGuardarLibro} className="p-6 space-y-4">
@@ -264,54 +298,18 @@ export default function LibrosPage() {
               <div><label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Autor (Opcional)</label><div className="relative"><User className="w-4 h-4 text-slate-500 absolute left-3 top-3" /><input type="text" placeholder="Ej: Jose Hernandez" value={autor} onChange={(e) => setAutor(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-semibold bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none placeholder:text-slate-400" /></div></div>
               <div><label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">ISBN (Opcional)</label><div className="relative"><Hash className="w-4 h-4 text-slate-500 absolute left-3 top-3" /><input type="text" placeholder="Ej: 9785741236548" value={isbn} onChange={(e) => setIsbn(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-semibold bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none placeholder:text-slate-400" /></div></div>
               <div><label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Categoría (Opcional)</label><div className="relative"><Folder className="w-4 h-4 text-slate-500 absolute left-3 top-3" /><input type="text" placeholder="Ej: Poesia" value={categoria} onChange={(e) => setCategoria(e.target.value)} className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-semibold bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none placeholder:text-slate-400" /></div></div>
-              <div><label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Cantidad de Ejemplares</label><div className="relative"><Layers className="w-4 h-4 text-slate-500 absolute left-3 top-3" /><input type="number" min="1" required value={cantidadTotal} onChange={(e) => setCantidadTotal(parseInt(e.target.value) || 1)} className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-black bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" /></div></div>
+              <div><label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Stock Total</label><div className="relative"><Layers className="w-4 h-4 text-slate-500 absolute left-3 top-3" /><input type="number" min="1" required value={cantidadTotal} onChange={(e) => setCantidadTotal(parseInt(e.target.value) || 1)} className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-black bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" /></div></div>
+              
+              {libroEditando && (
+                <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-xs font-medium border border-blue-100">
+                  Al cambiar el Stock Total, la cantidad de libros disponibles se ajustará automáticamente respetando los ejemplares que ya se encuentran prestados.
+                </div>
+              )}
+
               <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 mt-6">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors">Cancelar</button>
-                <button type="submit" disabled={guardando} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold py-2 px-4 rounded-lg shadow-sm active:scale-95">{guardando ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : 'Guardar Libro'}</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* NUEVO MODAL PREMIUM: Para ingresar el incremento de stock masivo */}
-      {libroParaStock && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-300 w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between bg-slate-100 p-4 border-b border-slate-300">
-              <h2 className="text-lg font-black text-slate-900">Incrementar Inventario</h2>
-              <button type="button" onClick={() => setLibroParaStock(null)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-200"><X className="w-5 h-5" /></button>
-            </div>
-            <form onSubmit={manejarActualizarStock} className="p-6 space-y-4">
-              <div className="bg-indigo-50/50 border border-indigo-100 rounded-lg p-3">
-                <p className="text-xs font-bold text-indigo-500 uppercase tracking-wider mb-1">Libro seleccionado</p>
-                <p className="text-sm font-bold text-slate-800">"{libroParaStock.titulo}"</p>
-                <p className="text-xs text-slate-500 mt-1">Stock actual: {libroParaStock.cant_disponible} disponibles de {libroParaStock.cant_total} totales.</p>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">¿Cuántas copias nuevas vas a agregar? *</label>
-                <div className="relative">
-                  <Layers className="w-4 h-4 text-slate-500 absolute left-3 top-3" />
-                  <input 
-                    type="number" 
-                    min="1" 
-                    required 
-                    value={cantidadParaAgregar} 
-                    onChange={(e) => setCantidadParaAgregar(parseInt(e.target.value) || 1)} 
-                    className="w-full pl-9 pr-3 py-2 border border-slate-300 rounded-lg text-sm text-slate-900 font-black bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none" 
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 mt-6">
-                <button type="button" onClick={() => setLibroParaStock(null)} className="px-4 py-2 border border-slate-300 rounded-lg text-sm font-bold text-slate-700 hover:bg-slate-100 transition-colors">Cancelar</button>
-                <button 
-                  type="submit" 
-                  disabled={actualizandoStock} 
-                  className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold py-2 px-4 rounded-lg shadow-sm active:scale-95"
-                >
-                  {actualizandoStock ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : 'Confirmar Ingreso'}
+                <button type="submit" disabled={guardando} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-400 text-white font-bold py-2 px-4 rounded-lg shadow-sm active:scale-95">
+                  {guardando ? <><Loader2 className="w-4 h-4 animate-spin" /> Guardando...</> : (libroEditando ? 'Guardar Cambios' : 'Guardar Libro')}
                 </button>
               </div>
             </form>
