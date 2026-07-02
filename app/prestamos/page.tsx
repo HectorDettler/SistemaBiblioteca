@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   ArrowLeftRight, Calendar, User, BookOpen, Search, 
   CheckCircle2, Clock, Plus, X, Loader2, AlertCircle, RefreshCw,
-  Filter, AlertTriangle
+  Filter, AlertTriangle, Printer
 } from 'lucide-react'
 
 // Tipados para TypeScript y Supabase
@@ -98,11 +98,9 @@ export default function PrestamosPage() {
       setPrestamos((dataPrestamos as any) || [])
 
       const { data: dataLibros } = await supabase.from('libros').select('id_libro, titulo, autor, cant_disponible')
-      // FIX TYPESCRIPT: Agregado el "as any"
       setLibros((dataLibros as any) || [])
 
       const { data: dataSocios } = await supabase.from('socios').select('id_socio, nombre, apellido, dni, estado_socio')
-      // FIX TYPESCRIPT: Agregado el "as any"
       setSocios((dataSocios as any) || [])
 
     } catch (error) {
@@ -206,6 +204,86 @@ export default function PrestamosPage() {
     }
   }
 
+  // NUEVA FUNCIÓN: Genera y dispara la impresión del ticket
+  function handleImprimirTicket(prestamo: Prestamo) {
+    // Abrimos una ventana oculta para inyectar el HTML del ticket
+    const ventana = window.open('', '_blank', 'width=400,height=600')
+    if (!ventana) {
+      lanzarToast('El navegador bloqueó la ventana de impresión. Habilita las ventanas emergentes.', 'warning')
+      return
+    }
+
+    const htmlTicket = `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <title>Ticket de Préstamo #${prestamo.id_prestamo}</title>
+        <style>
+          @page { margin: 0; }
+          body { 
+            font-family: 'Courier New', Courier, monospace; 
+            padding: 20px; 
+            color: #000; 
+            text-align: center; 
+            background: #fff;
+          }
+          .ticket { 
+            border: 1px dashed #000; 
+            padding: 20px; 
+            max-width: 300px; 
+            margin: 0 auto; 
+          }
+          .header { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+          .subheader { font-size: 14px; margin-bottom: 15px; }
+          .divider { border-top: 1px dashed #000; margin: 15px 0; }
+          .info { text-align: left; font-size: 13px; margin-bottom: 6px; line-height: 1.4; }
+          .footer { font-size: 12px; margin-top: 20px; font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <div class="ticket">
+          <div class="header">BIBLIOTECA MUNICIPAL</div>
+          <div class="subheader">Comprobante de Préstamo</div>
+          
+          <div class="divider"></div>
+          
+          <div class="info"><b>Socio:</b> ${prestamo.socios?.apellido}, ${prestamo.socios?.nombre}</div>
+          <div class="info"><b>DNI:</b> ${prestamo.socios?.dni}</div>
+          
+          <div class="divider"></div>
+          
+          <div class="info"><b>Libro:</b> ${prestamo.libros?.titulo}</div>
+          <div class="info"><b>Autor:</b> ${prestamo.libros?.autor || 'N/A'}</div>
+          
+          <div class="divider"></div>
+          
+          <div class="info"><b>Fecha de Retiro:</b><br>${prestamo.fecha_prestamo.split('-').reverse().join('/')}</div>
+          <div class="info"><b>Fecha Límite Devolución:</b><br>${prestamo.fecha_devol_esp.split('-').reverse().join('/')}</div>
+          
+          <div class="divider"></div>
+          
+          <div class="footer">
+            ¡Disfrute su lectura!<br>
+            Por favor devuelva el ejemplar a tiempo para evitar sanciones.
+          </div>
+        </div>
+        <script>
+          // Se espera a que cargue el contenido y lanza el menú de impresión
+          window.onload = function() { 
+            window.print(); 
+            // Opcional: Cerrar la ventana tras imprimir (comentado por seguridad en algunos navegadores)
+            // window.close(); 
+          }
+        </script>
+      </body>
+      </html>
+    `
+    
+    ventana.document.write(htmlTicket)
+    ventana.document.close()
+  }
+
   function cerrarModal() {
     setModalAbierto(false)
     setSocioSeleccionado(null)
@@ -215,7 +293,7 @@ export default function PrestamosPage() {
     setFechaDevolEsp(defectoDevolEsp)
   }
 
-  // === FILTRADO DEL BUSCADOR INTERACTIVO DEL MODAL (CON PARCHE DE AUTOR NULL) ===
+  // === FILTRADO DEL BUSCADOR INTERACTIVO DEL MODAL ===
   const sociosFiltradosModal = socios.filter(s => 
     s.nombre.toLowerCase().includes(filtroSocio.toLowerCase()) ||
     s.apellido.toLowerCase().includes(filtroSocio.toLowerCase()) ||
@@ -227,7 +305,7 @@ export default function PrestamosPage() {
     (l.autor && l.autor.toLowerCase().includes(filtroLibro.toLowerCase()))
   ).slice(0, 5)
 
-  // === FILTRADO Y BUSCADOR DE LA TABLA PRINCIPAL (INDEX) ===
+  // === FILTRADO Y BUSCADOR DE LA TABLA PRINCIPAL ===
   const prestamosProcesados = prestamos.filter(p => {
     const matchesBusqueda = 
       (p.libros?.titulo && p.libros.titulo.toLowerCase().includes(busquedaGlobal.toLowerCase())) ||
@@ -247,7 +325,7 @@ export default function PrestamosPage() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-12 relative">
       
-      {/* ESPACIO CONTENEDOR DE NOTIFICACIONES (TOASTS SYSTEM) - ¡AHORA POR ENCIMA DE TODO! */}
+      {/* ESPACIO CONTENEDOR DE NOTIFICACIONES (TOASTS SYSTEM) */}
       <div className="fixed bottom-5 right-5 z-[100] space-y-3 max-w-sm w-full">
         {toasts.map(t => (
           <div 
@@ -414,17 +492,29 @@ export default function PrestamosPage() {
                           )}
                         </td>
                         <td className="p-4 pr-6 text-right">
-                          {p.estado === 'Prestado' ? (
+                          <div className="flex items-center justify-end gap-2">
+                            {/* BOTÓN NUEVO: Imprimir Ticket */}
                             <button
-                              disabled={procesandoAccion}
-                              onClick={() => handleDevolucion(p)}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all inline-flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                              onClick={() => handleImprimirTicket(p)}
+                              title="Imprimir comprobante"
+                              className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors border border-transparent hover:border-indigo-100"
                             >
-                              <RefreshCw className="w-3.5 h-3.5" /> Recibir Libro
+                              <Printer className="w-4 h-4" />
                             </button>
-                          ) : (
-                            <span className="text-xs text-slate-400 italic">Operación cerrada</span>
-                          )}
+
+                            {/* Lógica original de recibir libro o mostrar "Cerrado" */}
+                            {p.estado === 'Prestado' ? (
+                              <button
+                                disabled={procesandoAccion}
+                                onClick={() => handleDevolucion(p)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs px-3 py-2 rounded-lg shadow-sm transition-all inline-flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" /> Recibir
+                              </button>
+                            ) : (
+                              <span className="text-xs text-slate-400 italic bg-slate-100 px-3 py-2 rounded-lg border border-slate-200">Cerrado</span>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     )
