@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { 
   ArrowLeftRight, Calendar, User, BookOpen, Search, 
   CheckCircle2, Clock, Plus, X, Loader2, AlertCircle, RefreshCw,
-  Filter, AlertTriangle, Printer
+  Filter, AlertTriangle, Printer, CalendarPlus, ChevronLeft, ChevronRight
 } from 'lucide-react'
 
 // Tipados para TypeScript y Supabase
@@ -54,6 +54,10 @@ export default function PrestamosPage() {
   const [busquedaGlobal, setBusquedaGlobal] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<'Todos' | 'Prestado' | 'Vencidos' | 'Devuelto'>('Todos')
 
+  // NUEVOS ESTADOS: Paginación
+  const [paginaActual, setPaginaActual] = useState(1)
+  const prestamosPorPagina = 10
+
   // Estado para las Alertas Estéticas (Toasts)
   const [toasts, setToasts] = useState<Toast[]>([])
 
@@ -94,7 +98,6 @@ export default function PrestamosPage() {
         .order('id_prestamo', { ascending: false })
 
       if (errP) throw errP
-      // FIX TYPESCRIPT: Agregado el "as any" para evitar el error de tipado estricto
       setPrestamos((dataPrestamos as any) || [])
 
       const { data: dataLibros } = await supabase.from('libros').select('id_libro, titulo, autor, cant_disponible')
@@ -204,9 +207,36 @@ export default function PrestamosPage() {
     }
   }
 
-  // NUEVA FUNCIÓN: Genera y dispara la impresión del ticket
+  // NUEVA FUNCIÓN: Extender plazo del préstamo (Suma 7 días)
+  async function handleExtenderPlazo(prestamo: Prestamo) {
+    if (!window.confirm(`¿Querés extender el plazo de devolución por 7 días más para el libro "${prestamo.libros?.titulo}"?`)) return
+    
+    setProcesandoAccion(true)
+    try {
+      // Sumamos 7 días a la fecha esperada actual
+      const fechaActual = new Date(prestamo.fecha_devol_esp + 'T00:00:00')
+      fechaActual.setDate(fechaActual.getDate() + 7)
+      const nuevaFecha = fechaActual.toISOString().split('T')[0]
+
+      const { error } = await supabase
+        .from('prestamos')
+        .update({ fecha_devol_esp: nuevaFecha })
+        .eq('id_prestamo', prestamo.id_prestamo)
+
+      if (error) throw error
+
+      lanzarToast(`Plazo extendido exitosamente hasta el ${nuevaFecha.split('-').reverse().join('/')}.`, 'success')
+      await cargarDatos()
+    } catch (error) {
+      console.error(error)
+      lanzarToast('Error al intentar extender el plazo.', 'error')
+    } finally {
+      setProcesandoAccion(false)
+    }
+  }
+
+  // Genera y dispara la impresión del ticket
   function handleImprimirTicket(prestamo: Prestamo) {
-    // Abrimos una ventana oculta para inyectar el HTML del ticket
     const ventana = window.open('', '_blank', 'width=400,height=600')
     if (!ventana) {
       lanzarToast('El navegador bloqueó la ventana de impresión. Habilita las ventanas emergentes.', 'warning')
@@ -269,12 +299,7 @@ export default function PrestamosPage() {
           </div>
         </div>
         <script>
-          // Se espera a que cargue el contenido y lanza el menú de impresión
-          window.onload = function() { 
-            window.print(); 
-            // Opcional: Cerrar la ventana tras imprimir (comentado por seguridad en algunos navegadores)
-            // window.close(); 
-          }
+          window.onload = function() { window.print(); }
         </script>
       </body>
       </html>
@@ -321,6 +346,12 @@ export default function PrestamosPage() {
     if (filtroEstado === 'Prestado') return p.estado === 'Prestado' && !estaVencido
     return p.estado === filtroEstado
   })
+
+  // === LÓGICA DE PAGINACIÓN ===
+  const totalPaginas = Math.ceil(prestamosProcesados.length / prestamosPorPagina)
+  const indiceUltimoPrestamo = paginaActual * prestamosPorPagina
+  const indicePrimerPrestamo = indiceUltimoPrestamo - prestamosPorPagina
+  const prestamosPaginados = prestamosProcesados.slice(indicePrimerPrestamo, indiceUltimoPrestamo)
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-12 relative">
@@ -372,11 +403,11 @@ export default function PrestamosPage() {
             type="text"
             placeholder="Buscar por Apellido de Socio o Título de Libro..."
             value={busquedaGlobal}
-            onChange={(e) => setBusquedaGlobal(e.target.value)}
+            onChange={(e) => { setBusquedaGlobal(e.target.value); setPaginaActual(1); }}
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 focus:outline-none focus:border-indigo-500 text-sm"
           />
           {busquedaGlobal && (
-            <button onClick={() => setBusquedaGlobal('')} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600">
+            <button onClick={() => { setBusquedaGlobal(''); setPaginaActual(1); }} className="absolute right-3 top-3 text-slate-400 hover:text-slate-600">
               <X className="w-4 h-4" />
             </button>
           )}
@@ -392,7 +423,7 @@ export default function PrestamosPage() {
           ].map((item) => (
             <button
               key={item.id}
-              onClick={() => setFiltroEstado(item.id as any)}
+              onClick={() => { setFiltroEstado(item.id as any); setPaginaActual(1); }}
               className={`px-3 py-2 rounded-lg transition-all ${
                 filtroEstado === item.id 
                   ? 'bg-indigo-600 text-white shadow-sm' 
@@ -426,7 +457,7 @@ export default function PrestamosPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {prestamosProcesados.length === 0 ? (
+                {prestamosPaginados.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-center p-12 text-slate-400 font-medium">
                       <AlertCircle className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -434,7 +465,7 @@ export default function PrestamosPage() {
                     </td>
                   </tr>
                 ) : (
-                  prestamosProcesados.map((p) => {
+                  prestamosPaginados.map((p) => {
                     const estaVencido = p.estado === 'Prestado' && new Date(p.fecha_devol_esp) < new Date(hoyStr)
                     return (
                       <tr key={p.id_prestamo} className="hover:bg-slate-50/50 transition-colors">
@@ -492,8 +523,8 @@ export default function PrestamosPage() {
                           )}
                         </td>
                         <td className="p-4 pr-6 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            {/* BOTÓN NUEVO: Imprimir Ticket */}
+                          <div className="flex items-center justify-end gap-1">
+                            {/* BOTÓN: Imprimir Ticket */}
                             <button
                               onClick={() => handleImprimirTicket(p)}
                               title="Imprimir comprobante"
@@ -502,7 +533,18 @@ export default function PrestamosPage() {
                               <Printer className="w-4 h-4" />
                             </button>
 
-                            {/* Lógica original de recibir libro o mostrar "Cerrado" */}
+                            {/* BOTÓN: Extender Plazo (+7 días) */}
+                            {p.estado === 'Prestado' && (
+                              <button
+                                disabled={procesandoAccion}
+                                onClick={() => handleExtenderPlazo(p)}
+                                title="Extender plazo (+7 días)"
+                                className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors border border-transparent hover:border-amber-100 mr-1"
+                              >
+                                <CalendarPlus className="w-4 h-4" />
+                              </button>
+                            )}
+
                             {p.estado === 'Prestado' ? (
                               <button
                                 disabled={procesandoAccion}
@@ -523,6 +565,32 @@ export default function PrestamosPage() {
               </tbody>
             </table>
           </div>
+          
+          {/* BARRA DE PAGINACIÓN */}
+          {totalPaginas > 1 && (
+            <div className="bg-slate-50 px-4 py-3.5 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between select-none gap-4">
+              <div className="text-xs font-bold text-slate-500">
+                Mostrando préstamos {indicePrimerPrestamo + 1} al {Math.min(indiceUltimoPrestamo, prestamosProcesados.length)} de un total de {prestamosProcesados.length}
+              </div>
+              <div className="flex items-center gap-1 bg-white border border-slate-300 rounded-lg p-1 shadow-sm">
+                <button 
+                  disabled={paginaActual === 1} 
+                  onClick={() => setPaginaActual(p => p - 1)} 
+                  className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="text-xs font-bold px-3 text-slate-700">Página {paginaActual} de {totalPaginas}</div>
+                <button 
+                  disabled={paginaActual === totalPaginas} 
+                  onClick={() => setPaginaActual(p => p + 1)} 
+                  className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
