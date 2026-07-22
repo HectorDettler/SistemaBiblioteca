@@ -54,7 +54,7 @@ export default function PrestamosPage() {
   const [busquedaGlobal, setBusquedaGlobal] = useState('')
   const [filtroEstado, setFiltroEstado] = useState<'Todos' | 'Prestado' | 'Vencidos' | 'Devuelto'>('Todos')
 
-  // NUEVOS ESTADOS: Paginación
+  // Estados: Paginación
   const [paginaActual, setPaginaActual] = useState(1)
   const prestamosPorPagina = 10
 
@@ -68,6 +68,9 @@ export default function PrestamosPage() {
   const [socioSeleccionado, setSocioSeleccionado] = useState<Socio | null>(null)
   const [libroSeleccionado, setLibroSeleccionado] = useState<Libro | null>(null)
   
+  // NUEVO ESTADO: Para el Modal Estético de Extensión de Plazo
+  const [prestamoAExtender, setPrestamoAExtender] = useState<Prestamo | null>(null)
+
   // Manejo de fechas por defecto
   const hoyStr = new Date().toISOString().split('T')[0]
   const unaSemanaDespues = new Date()
@@ -207,25 +210,26 @@ export default function PrestamosPage() {
     }
   }
 
-  // NUEVA FUNCIÓN: Extender plazo del préstamo (Suma 7 días)
-  async function handleExtenderPlazo(prestamo: Prestamo) {
-    if (!window.confirm(`¿Querés extender el plazo de devolución por 7 días más para el libro "${prestamo.libros?.titulo}"?`)) return
+  // NUEVA FUNCIÓN: Confirma y extiende el plazo del préstamo desde el modal
+  async function handleConfirmarExtension() {
+    if (!prestamoAExtender) return
     
     setProcesandoAccion(true)
     try {
       // Sumamos 7 días a la fecha esperada actual
-      const fechaActual = new Date(prestamo.fecha_devol_esp + 'T00:00:00')
+      const fechaActual = new Date(prestamoAExtender.fecha_devol_esp + 'T00:00:00')
       fechaActual.setDate(fechaActual.getDate() + 7)
       const nuevaFecha = fechaActual.toISOString().split('T')[0]
 
       const { error } = await supabase
         .from('prestamos')
         .update({ fecha_devol_esp: nuevaFecha })
-        .eq('id_prestamo', prestamo.id_prestamo)
+        .eq('id_prestamo', prestamoAExtender.id_prestamo)
 
       if (error) throw error
 
       lanzarToast(`Plazo extendido exitosamente hasta el ${nuevaFecha.split('-').reverse().join('/')}.`, 'success')
+      setPrestamoAExtender(null) // Cerramos el modal
       await cargarDatos()
     } catch (error) {
       console.error(error)
@@ -533,11 +537,11 @@ export default function PrestamosPage() {
                               <Printer className="w-4 h-4" />
                             </button>
 
-                            {/* BOTÓN: Extender Plazo (+7 días) */}
+                            {/* BOTÓN: Extender Plazo - AHORA ABRE MODAL */}
                             {p.estado === 'Prestado' && (
                               <button
                                 disabled={procesandoAccion}
-                                onClick={() => handleExtenderPlazo(p)}
+                                onClick={() => setPrestamoAExtender(p)}
                                 title="Extender plazo (+7 días)"
                                 className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors border border-transparent hover:border-amber-100 mr-1"
                               >
@@ -594,7 +598,7 @@ export default function PrestamosPage() {
         </div>
       )}
 
-      {/* MODAL REGISTRAR NUEVO PRESTAMO */}
+      {/* MODAL: REGISTRAR NUEVO PRESTAMO */}
       {modalAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
@@ -753,6 +757,47 @@ export default function PrestamosPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* NUEVO MODAL: CONFIRMAR EXTENSIÓN DE PLAZO */}
+      {prestamoAExtender && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4 z-50 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-5 bg-amber-50 border-b border-amber-100 flex justify-between items-center">
+              <h3 className="font-black text-lg text-amber-900 flex items-center gap-2">
+                <CalendarPlus className="w-5 h-5" /> Extender Plazo
+              </h3>
+              <button onClick={() => setPrestamoAExtender(null)} className="text-amber-700 hover:text-amber-900 p-1 rounded-lg">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6 text-center space-y-4">
+              <p className="text-slate-600 text-sm">
+                Se sumarán <strong className="text-slate-800">7 días adicionales</strong> a la fecha de devolución esperada para el libro:
+              </p>
+              <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 inline-block">
+                <span className="font-bold text-slate-800">"{prestamoAExtender.libros?.titulo}"</span>
+              </div>
+              
+              <div className="flex items-center justify-center gap-3 pt-4 border-t border-slate-100 mt-6">
+                <button
+                  type="button"
+                  onClick={() => setPrestamoAExtender(null)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 rounded-lg hover:bg-slate-50 font-bold text-sm transition-all"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleConfirmarExtension}
+                  disabled={procesandoAccion}
+                  className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg font-bold text-sm shadow-md transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+                >
+                  {procesandoAccion ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmar Extensión'}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
