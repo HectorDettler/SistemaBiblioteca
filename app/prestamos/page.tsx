@@ -66,7 +66,9 @@ export default function PrestamosPage() {
   const [filtroSocio, setFiltroSocio] = useState('')
   const [filtroLibro, setFiltroLibro] = useState('')
   const [socioSeleccionado, setSocioSeleccionado] = useState<Socio | null>(null)
-  const [libroSeleccionado, setLibroSeleccionado] = useState<Libro | null>(null)
+  
+  // NUEVO ESTADO: Carrito de libros
+  const [librosSeleccionados, setLibrosSeleccionados] = useState<Libro[]>([])
   
   // NUEVO ESTADO: Para el Modal Estético de Extensión de Plazo
   const [prestamoAExtender, setPrestamoAExtender] = useState<Prestamo | null>(null)
@@ -121,46 +123,65 @@ export default function PrestamosPage() {
     cargarDatos()
   }, [])
 
-  // Guardar nuevo préstamo
-  async function handleCrearPrestamo(e: React.FormEvent) {
-    e.preventDefault()
-    if (!socioSeleccionado || !libroSeleccionado) {
-      lanzarToast('Por favor, selecciona un socio y un libro válido.', 'warning')
+  // Agregar libro al carrito
+  const agregarLibroAlCarrito = (libro: Libro) => {
+    if (librosSeleccionados.find(l => l.id_libro === libro.id_libro)) {
+      lanzarToast('El libro ya está en la lista.', 'warning')
       return
     }
+    if (libro.cant_disponible <= 0) {
+      lanzarToast('¡Sin stock! No quedan ejemplares disponibles.', 'error')
+      return
+    }
+    setLibrosSeleccionados([...librosSeleccionados, libro])
+    setFiltroLibro('')
+  }
 
+  // Quitar libro del carrito
+  const quitarLibroDelCarrito = (id_libro: number) => {
+    setLibrosSeleccionados(librosSeleccionados.filter(l => l.id_libro !== id_libro))
+  }
+
+  // Guardar nuevo préstamo (MÚLTIPLE)
+  async function handleCrearPrestamo(e: React.FormEvent) {
+    e.preventDefault()
+    if (!socioSeleccionado) {
+      lanzarToast('Por favor, selecciona un socio válido.', 'warning')
+      return
+    }
+    if (librosSeleccionados.length === 0) {
+      lanzarToast('Debes seleccionar al menos un libro.', 'warning')
+      return
+    }
     if (socioSeleccionado.estado_socio !== 'Activo') {
       lanzarToast('Operación denegada. El socio se encuentra Inactivo.', 'error')
       return
     }
 
-    if (libroSeleccionado.cant_disponible <= 0) {
-      lanzarToast('¡Sin stock! No quedan ejemplares disponibles en estante.', 'error')
-      return
-    }
-
     setProcesandoAccion(true)
     try {
-      const { error: errInsert } = await supabase.from('prestamos').insert([
-        {
-          libro_id: libroSeleccionado.id_libro,
-          socio_id: socioSeleccionado.id_socio,
-          fecha_prestamo: hoyStr,
-          fecha_devol_esp: fechaDevolEsp,
-          fecha_devol_real: null,
-          estado: 'Prestado'
-        }
-      ])
+      const nuevosPrestamos = librosSeleccionados.map(libro => ({
+        libro_id: libro.id_libro,
+        socio_id: socioSeleccionado.id_socio,
+        fecha_prestamo: hoyStr,
+        fecha_devol_esp: fechaDevolEsp,
+        fecha_devol_real: null,
+        estado: 'Prestado'
+      }))
+
+      const { error: errInsert } = await supabase.from('prestamos').insert(nuevosPrestamos)
       if (errInsert) throw errInsert
 
-      const { error: errUpdateStock } = await supabase
-        .from('libros')
-        .update({ cant_disponible: libroSeleccionado.cant_disponible - 1 })
-        .eq('id_libro', libroSeleccionado.id_libro)
-      
-      if (errUpdateStock) throw errUpdateStock
+      for (const libro of librosSeleccionados) {
+        await supabase
+          .from('libros')
+          .update({ cant_disponible: libro.cant_disponible - 1 })
+          .eq('id_libro', libro.id_libro)
+      }
 
-      lanzarToast('¡Préstamo registrado con éxito!', 'success')
+      handleImprimirTicketMulti(socioSeleccionado, librosSeleccionados, hoyStr, fechaDevolEsp)
+
+      lanzarToast(`¡${librosSeleccionados.length} préstamo(s) registrado(s) con éxito!`, 'success')
       cerrarModal()
       await cargarDatos()
     } catch (error) {
@@ -210,13 +231,12 @@ export default function PrestamosPage() {
     }
   }
 
-  // NUEVA FUNCIÓN: Confirma y extiende el plazo del préstamo desde el modal
+  // Confirma y extiende el plazo del préstamo desde el modal
   async function handleConfirmarExtension() {
     if (!prestamoAExtender) return
     
     setProcesandoAccion(true)
     try {
-      // Sumamos 7 días a la fecha esperada actual
       const fechaActual = new Date(prestamoAExtender.fecha_devol_esp + 'T00:00:00')
       fechaActual.setDate(fechaActual.getDate() + 7)
       const nuevaFecha = fechaActual.toISOString().split('T')[0]
@@ -229,7 +249,7 @@ export default function PrestamosPage() {
       if (error) throw error
 
       lanzarToast(`Plazo extendido exitosamente hasta el ${nuevaFecha.split('-').reverse().join('/')}.`, 'success')
-      setPrestamoAExtender(null) // Cerramos el modal
+      setPrestamoAExtender(null)
       await cargarDatos()
     } catch (error) {
       console.error(error)
@@ -239,9 +259,41 @@ export default function PrestamosPage() {
     }
   }
 
-  // Genera y dispara la impresión del ticket
+  // Constante con el HTML de la leyenda para reutilizar
+  const leyendaHTML = `
+    <div class="leyenda">
+      <p><b>¡Este libro se va con vos!</b> Y mientras los acompaña en esta aventura, su cuidado está totalmente a su cargo.</p>
+      <p>Nuestros libros viajan de mano en mano, llevando historias, conocimientos y magia a muchos hogares. Para que sigan intactos y listos para futuras lecturas, les pedimos que los traten con el mismo amor y respeto con el que fueron creados.</p>
+      <p>Aquí les dejamos algunos pequeños consejos para cuidarlos como se merecen:</p>
+      <ul>
+        <li>📚 <b>Búscale un lugar seguro:</b> Mantenelo lejos de la comida, líquidos o lugares húmedos para evitar manchas o páginas dañadas.</li>
+        <li>📚 <b>Usa señaladores:</b> Evitá doblar las esquinas de las páginas o dejar el libro abierto boca abajo.</li>
+        <li>📚 <b>Manos limpias, páginas felices:</b> Antes de sentarte a leer, asegúrate de tener las manos bien limpias.</li>
+        <li>📚 <b>Cuidado al transportarlo:</b> Llevalo en un compartimento protegido de tu mochila o bolso para que no se doblen las tapas ni las hojas.</li>
+      </ul>
+      <p style="text-align: center; font-weight: bold; margin-top: 15px;">🥰 Tratar un libro con cariño es un acto de amor hacia la lectura y un gesto de consideración hacia el próximo lector. ¡Que disfrutes mucho de esta historia!</p>
+    </div>
+  `
+
+  const estilosTicket = `
+    <style>
+      @page { margin: 0; }
+      body { font-family: 'Courier New', Courier, monospace; padding: 20px; color: #000; text-align: center; background: #fff; }
+      .ticket { border: 1px dashed #000; padding: 20px; max-width: 320px; margin: 0 auto; }
+      .header { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+      .subheader { font-size: 14px; margin-bottom: 15px; }
+      .divider { border-top: 1px dashed #000; margin: 15px 0; }
+      .info { text-align: left; font-size: 13px; margin-bottom: 6px; line-height: 1.4; }
+      .leyenda { text-align: justify; font-size: 11px; margin-top: 20px; line-height: 1.3; }
+      .leyenda p { margin: 6px 0; }
+      .leyenda ul { text-align: left; padding-left: 15px; margin: 8px 0; list-style-type: none; }
+      .leyenda li { margin-bottom: 5px; text-indent: -15px; }
+    </style>
+  `
+
+  // Genera ticket INDIVIDUAL
   function handleImprimirTicket(prestamo: Prestamo) {
-    const ventana = window.open('', '_blank', 'width=400,height=600')
+    const ventana = window.open('', '_blank', 'width=450,height=700')
     if (!ventana) {
       lanzarToast('El navegador bloqueó la ventana de impresión. Habilita las ventanas emergentes.', 'warning')
       return
@@ -253,62 +305,70 @@ export default function PrestamosPage() {
       <head>
         <meta charset="UTF-8">
         <title>Ticket de Préstamo #${prestamo.id_prestamo}</title>
-        <style>
-          @page { margin: 0; }
-          body { 
-            font-family: 'Courier New', Courier, monospace; 
-            padding: 20px; 
-            color: #000; 
-            text-align: center; 
-            background: #fff;
-          }
-          .ticket { 
-            border: 1px dashed #000; 
-            padding: 20px; 
-            max-width: 300px; 
-            margin: 0 auto; 
-          }
-          .header { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
-          .subheader { font-size: 14px; margin-bottom: 15px; }
-          .divider { border-top: 1px dashed #000; margin: 15px 0; }
-          .info { text-align: left; font-size: 13px; margin-bottom: 6px; line-height: 1.4; }
-          .footer { font-size: 12px; margin-top: 20px; font-weight: bold; }
-        </style>
+        ${estilosTicket}
       </head>
       <body>
         <div class="ticket">
           <div class="header">BIBLIOTECA MUNICIPAL</div>
           <div class="subheader">Comprobante de Préstamo</div>
-          
           <div class="divider"></div>
-          
           <div class="info"><b>Socio:</b> ${prestamo.socios?.apellido}, ${prestamo.socios?.nombre}</div>
           <div class="info"><b>DNI:</b> ${prestamo.socios?.dni}</div>
-          
           <div class="divider"></div>
-          
           <div class="info"><b>Libro:</b> ${prestamo.libros?.titulo}</div>
           <div class="info"><b>Autor:</b> ${prestamo.libros?.autor || 'N/A'}</div>
-          
           <div class="divider"></div>
-          
           <div class="info"><b>Fecha de Retiro:</b><br>${prestamo.fecha_prestamo.split('-').reverse().join('/')}</div>
           <div class="info"><b>Fecha Límite Devolución:</b><br>${prestamo.fecha_devol_esp.split('-').reverse().join('/')}</div>
-          
           <div class="divider"></div>
-          
-          <div class="footer">
-            ¡Disfrute su lectura!<br>
-            Por favor devuelva el ejemplar a tiempo para evitar sanciones.
-          </div>
+          ${leyendaHTML}
         </div>
-        <script>
-          window.onload = function() { window.print(); }
-        </script>
+        <script>window.onload = function() { window.print(); }</script>
       </body>
       </html>
     `
-    
+    ventana.document.write(htmlTicket)
+    ventana.document.close()
+  }
+
+  // Genera ticket MÚLTIPLE
+  function handleImprimirTicketMulti(socio: Socio, librosSeleccionados: Libro[], fechaPrestamo: string, fechaDevolucion: string) {
+    const ventana = window.open('', '_blank', 'width=450,height=700')
+    if (!ventana) return
+
+    let listaLibrosHtml = ''
+    librosSeleccionados.forEach(l => {
+      listaLibrosHtml += `<div style="margin-bottom:8px;">- <b>${l.titulo}</b><br><small>(${l.autor || 'N/A'})</small></div>`
+    })
+
+    const htmlTicket = `
+      <!DOCTYPE html>
+      <html lang="es">
+      <head>
+        <meta charset="UTF-8">
+        <title>Ticket de Préstamos</title>
+        ${estilosTicket}
+      </head>
+      <body>
+        <div class="ticket">
+          <div class="header">BIBLIOTECA MUNICIPAL</div>
+          <div class="subheader">Comprobante de Préstamos Múltiples</div>
+          <div class="divider"></div>
+          <div class="info"><b>Socio:</b> ${socio.apellido}, ${socio.nombre}</div>
+          <div class="info"><b>DNI:</b> ${socio.dni}</div>
+          <div class="divider"></div>
+          <div class="info"><b>Ejemplares Retirados (${librosSeleccionados.length}):</b></div>
+          <div class="info" style="margin-top: 8px;">${listaLibrosHtml}</div>
+          <div class="divider"></div>
+          <div class="info"><b>Fecha de Retiro:</b><br>${fechaPrestamo.split('-').reverse().join('/')}</div>
+          <div class="info"><b>Fecha Límite Devolución:</b><br>${fechaDevolucion.split('-').reverse().join('/')}</div>
+          <div class="divider"></div>
+          ${leyendaHTML}
+        </div>
+        <script>window.onload = function() { window.print(); }</script>
+      </body>
+      </html>
+    `
     ventana.document.write(htmlTicket)
     ventana.document.close()
   }
@@ -316,7 +376,7 @@ export default function PrestamosPage() {
   function cerrarModal() {
     setModalAbierto(false)
     setSocioSeleccionado(null)
-    setLibroSeleccionado(null)
+    setLibrosSeleccionados([]) // Limpiamos el carrito
     setFiltroSocio('')
     setFiltroLibro('')
     setFechaDevolEsp(defectoDevolEsp)
@@ -528,7 +588,6 @@ export default function PrestamosPage() {
                         </td>
                         <td className="p-4 pr-6 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {/* BOTÓN: Imprimir Ticket */}
                             <button
                               onClick={() => handleImprimirTicket(p)}
                               title="Imprimir comprobante"
@@ -536,8 +595,6 @@ export default function PrestamosPage() {
                             >
                               <Printer className="w-4 h-4" />
                             </button>
-
-                            {/* BOTÓN: Extender Plazo - AHORA ABRE MODAL */}
                             {p.estado === 'Prestado' && (
                               <button
                                 disabled={procesandoAccion}
@@ -548,7 +605,6 @@ export default function PrestamosPage() {
                                 <CalendarPlus className="w-4 h-4" />
                               </button>
                             )}
-
                             {p.estado === 'Prestado' ? (
                               <button
                                 disabled={procesandoAccion}
@@ -598,12 +654,12 @@ export default function PrestamosPage() {
         </div>
       )}
 
-      {/* MODAL: REGISTRAR NUEVO PRESTAMO */}
+      {/* MODAL REGISTRAR NUEVO PRESTAMO (CARRITO) */}
       {modalAbierto && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
-              <h3 className="font-black text-xl text-slate-800">Registrar Salida de Libro</h3>
+              <h3 className="font-black text-xl text-slate-800">Registrar Salida de Libros</h3>
               <button onClick={cerrarModal} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
                 <X className="w-6 h-6" />
               </button>
@@ -667,66 +723,74 @@ export default function PrestamosPage() {
                 )}
               </div>
 
-              {/* 2. SELECCIONAR LIBRO */}
+              {/* 2. CARRITO DE LIBROS */}
               <div className="space-y-1.5 relative">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">2. Seleccionar Libro Ejemplar *</label>
-                {!libroSeleccionado ? (
-                  <>
-                    <div className="relative">
-                      <Search className="w-5 h-5 absolute left-3 top-3 text-slate-400" />
-                      <input
-                        type="text"
-                        placeholder="Buscar por Título o Autor..."
-                        value={filtroLibro}
-                        onChange={(e) => setFiltroLibro(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-indigo-500 text-sm"
-                      />
-                    </div>
-                    {filtroLibro && (
-                      <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-10 divide-y divide-slate-100">
-                        {librosFiltradosModal.length === 0 ? (
-                          <p className="p-3 text-xs text-slate-400 italic">No se encontraron libros con ese título.</p>
-                        ) : (
-                          librosFiltradosModal.map(l => (
-                            <button
-                              key={l.id_libro}
-                              type="button"
-                              onClick={() => setLibroSeleccionado(l)}
-                              className="w-full text-left p-3 hover:bg-indigo-50 text-sm flex items-center justify-between"
-                            >
-                              <div>
-                                <span className="font-bold text-slate-700 block">{l.titulo}</span>
-                                <span className="text-xs text-slate-400">Autor: {l.autor || 'Sin autor asignado'}</span>
-                              </div>
-                              <span className={`text-xs font-bold px-2 py-0.5 rounded ${l.cant_disponible > 0 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
-                                Disp: {l.cant_disponible}
-                              </span>
-                            </button>
-                          ))
-                        )}
-                      </div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">2. Agregar Ejemplares *</label>
+                
+                <div className="relative">
+                  <Search className="w-5 h-5 absolute left-3 top-3 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Buscar por Título o Autor..."
+                    value={filtroLibro}
+                    onChange={(e) => setFiltroLibro(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-slate-800 focus:outline-none focus:border-indigo-500 text-sm"
+                  />
+                </div>
+                
+                {filtroLibro && (
+                  <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-10 divide-y divide-slate-100">
+                    {librosFiltradosModal.length === 0 ? (
+                      <p className="p-3 text-xs text-slate-400 italic">No se encontraron libros con ese título.</p>
+                    ) : (
+                      librosFiltradosModal.map(l => (
+                        <button
+                          key={l.id_libro}
+                          type="button"
+                          onClick={() => agregarLibroAlCarrito(l)}
+                          className="w-full text-left p-3 hover:bg-indigo-50 text-sm flex items-center justify-between"
+                        >
+                          <div>
+                            <span className="font-bold text-slate-700 block">{l.titulo}</span>
+                            <span className="text-xs text-slate-400">Autor: {l.autor || 'Sin autor asignado'}</span>
+                          </div>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded ${l.cant_disponible > 0 ? 'bg-amber-100 text-amber-700' : 'bg-rose-100 text-rose-700'}`}>
+                            Disp: {l.cant_disponible}
+                          </span>
+                        </button>
+                      ))
                     )}
-                  </>
-                ) : (
-                  <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-lg flex justify-between items-center">
-                    <div className="flex items-center gap-2">
-                      <BookOpen className="w-5 h-5 text-emerald-600" />
-                      <div>
-                        <p className="text-sm font-bold text-emerald-900">{libroSeleccionado.titulo}</p>
-                        <p className="text-xs text-emerald-600">Autor: {libroSeleccionado.autor || 'Sin autor asignado'} • Disponibles: {libroSeleccionado.cant_disponible}</p>
+                  </div>
+                )}
+
+                {/* LISTA DE LIBROS SELECCIONADOS (EL CARRITO) */}
+                {librosSeleccionados.length > 0 && (
+                  <div className="mt-3 space-y-2 max-h-40 overflow-y-auto pr-1">
+                    <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Ejemplares a llevar ({librosSeleccionados.length}):
+                    </p>
+                    {librosSeleccionados.map(libro => (
+                      <div key={libro.id_libro} className="bg-emerald-50 border border-emerald-200 p-2.5 rounded-lg flex justify-between items-center animate-in fade-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="w-4 h-4 text-emerald-600" />
+                          <div>
+                            <p className="text-xs font-bold text-emerald-900 leading-tight">{libro.titulo}</p>
+                            <p className="text-[10px] text-emerald-600">Disp. actual: {libro.cant_disponible}</p>
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => quitarLibroDelCarrito(libro.id_libro)} className="text-emerald-500 hover:text-emerald-700 p-1 bg-emerald-100/50 hover:bg-emerald-100 rounded transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
                       </div>
-                    </div>
-                    <button type="button" onClick={() => setLibroSeleccionado(null)} className="text-emerald-400 hover:text-emerald-700 p-1">
-                      <X className="w-4 h-4" />
-                    </button>
+                    ))}
                   </div>
                 )}
               </div>
 
               {/* 3. FECHA DE DEVOLUCIÓN */}
-              <div className="space-y-1.5">
+              <div className="space-y-1.5 pt-2">
                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block flex items-center gap-1">
-                  <Calendar className="w-4 h-4 text-slate-400" /> 3. Fecha Límite de Devolución *
+                  <Calendar className="w-4 h-4 text-slate-400" /> 3. Fecha Límite de Devolución (General) *
                 </label>
                 <input
                   type="date"
@@ -749,11 +813,11 @@ export default function PrestamosPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={procesandoAccion || !socioSeleccionado || !libroSeleccionado}
+                  disabled={procesandoAccion || !socioSeleccionado || librosSeleccionados.length === 0}
                   className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold text-sm shadow-md transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center gap-2"
                 >
                   {procesandoAccion && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Concretar Préstamo
+                  Concretar Préstamo ({librosSeleccionados.length})
                 </button>
               </div>
             </form>
@@ -761,7 +825,7 @@ export default function PrestamosPage() {
         </div>
       )}
 
-      {/* NUEVO MODAL: CONFIRMAR EXTENSIÓN DE PLAZO */}
+      {/* MODAL: CONFIRMAR EXTENSIÓN DE PLAZO */}
       {prestamoAExtender && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center p-4 z-50 animate-in fade-in duration-200">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-sm overflow-hidden animate-in zoom-in-95 duration-200">
