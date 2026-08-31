@@ -89,7 +89,7 @@ export default function PrestamosPage() {
     }, 4000)
   }
 
-  // Cargar datos iniciales de Supabase
+  // Cargar datos iniciales de Supabase (CON LA CORRECCIÓN DEL ORDENAMIENTO EN LIBROS)
   async function cargarDatos() {
     setCargando(true)
     try {
@@ -105,10 +105,15 @@ export default function PrestamosPage() {
       if (errP) throw errP
       setPrestamos((dataPrestamos as any) || [])
 
-      const { data: dataLibros } = await supabase.from('libros').select('id_libro, titulo, autor, cant_disponible')
+      const { data: dataLibros } = await supabase
+        .from('libros')
+        .select('id_libro, titulo, autor, cant_disponible')
+        .order('id_libro', { ascending: false }) // ACÁ ESTÁ EL FIX CLAVE
       setLibros((dataLibros as any) || [])
 
-      const { data: dataSocios } = await supabase.from('socios').select('id_socio, nombre, apellido, dni, estado_socio')
+      const { data: dataSocios } = await supabase
+        .from('socios')
+        .select('id_socio, nombre, apellido, dni, estado_socio')
       setSocios((dataSocios as any) || [])
 
     } catch (error) {
@@ -259,7 +264,7 @@ export default function PrestamosPage() {
     }
   }
 
-  // Constante con el HTML de la leyenda para reutilizar
+  // Constante con el HTML de la leyenda
   const leyendaHTML = `
     <div class="leyenda">
       <p><b>¡Este libro se va con vos!</b> Y mientras los acompaña en esta aventura, su cuidado está totalmente a su cargo.</p>
@@ -376,7 +381,7 @@ export default function PrestamosPage() {
   function cerrarModal() {
     setModalAbierto(false)
     setSocioSeleccionado(null)
-    setLibrosSeleccionados([]) // Limpiamos el carrito
+    setLibrosSeleccionados([]) 
     setFiltroSocio('')
     setFiltroLibro('')
     setFechaDevolEsp(defectoDevolEsp)
@@ -389,10 +394,14 @@ export default function PrestamosPage() {
     s.dni.toString().includes(filtroSocio)
   ).slice(0, 5)
 
-  const librosFiltradosModal = libros.filter(l => 
-    (l.titulo && l.titulo.toLowerCase().includes(filtroLibro.toLowerCase())) ||
-    (l.autor && l.autor.toLowerCase().includes(filtroLibro.toLowerCase()))
-  ).slice(0, 5)
+  // (CORRECCIÓN DEL FILTRO: IGNORA STOCK 0 Y AUMENTA A 15)
+  const librosFiltradosModal = libros.filter(l => {
+    if (l.cant_disponible <= 0) return false;
+    const termino = filtroLibro.toLowerCase();
+    const coincideTitulo = l.titulo && l.titulo.toLowerCase().includes(termino);
+    const coincideAutor = l.autor && l.autor.toLowerCase().includes(termino);
+    return coincideTitulo || coincideAutor;
+  }).slice(0, 15); 
 
   // === FILTRADO Y BUSCADOR DE LA TABLA PRINCIPAL ===
   const prestamosProcesados = prestamos.filter(p => {
