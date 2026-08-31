@@ -109,6 +109,7 @@ export default function PrestamosPage() {
         .from('libros')
         .select('id_libro, titulo, autor, cant_disponible')
         .order('id_libro', { ascending: false }) // ACÁ ESTÁ EL FIX CLAVE
+        .limit(5000)
       setLibros((dataLibros as any) || [])
 
       const { data: dataSocios } = await supabase

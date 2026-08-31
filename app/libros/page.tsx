@@ -43,7 +43,13 @@ export default function LibrosPage() {
   async function obtenerLibros() {
     setCargando(true)
     try {
-      const { data, error } = await supabase.from('libros').select('*').order('id_libro', { ascending: false })
+      // AGREGADO: .limit(5000) para evitar el tope por defecto de Supabase de 1000 registros
+      const { data, error } = await supabase
+        .from('libros')
+        .select('*')
+        .order('id_libro', { ascending: false })
+        .limit(5000)
+        
       if (!error && data) setLibros(data)
     } catch (err) {
       console.error(err)
@@ -87,11 +93,9 @@ export default function LibrosPage() {
 
     if (libroEditando) {
       // --- LÓGICA DE ACTUALIZACIÓN ---
-      // Calculamos cómo afecta el cambio de stock total al stock disponible
       const diferenciaStock = cantNum - libroEditando.cant_total
       const nuevaCantDisponible = libroEditando.cant_disponible + diferenciaStock
 
-      // Validación de seguridad: No se puede reducir el stock total por debajo de los libros ya prestados
       if (nuevaCantDisponible < 0) {
         setGuardando(false)
         return alert(`¡Operación no permitida!\n\nActualmente hay ${libroEditando.cant_total - libroEditando.cant_disponible} ejemplares prestados.\nNo puedes reducir el inventario total por debajo de esa cantidad.`)
@@ -118,7 +122,7 @@ export default function LibrosPage() {
       }
 
     } else {
-      // --- LÓGICA DE CREACIÓN (COMO ESTABA ANTES) ---
+      // --- LÓGICA DE CREACIÓN ---
       const nuevoLibro = {
         titulo: titulo.trim(),
         autor: autor.trim() || null,
@@ -247,7 +251,6 @@ export default function LibrosPage() {
                     <td className="p-4 text-center"><span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">{libro.cant_disponible} / {libro.cant_total}</span></td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-2">
-                        {/* BOTÓN DE EDICIÓN UNIFICADO */}
                         <button 
                           onClick={() => abrirModalEdicion(libro)} 
                           title="Editar detalles o modificar stock"
