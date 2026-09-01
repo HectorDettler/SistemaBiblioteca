@@ -49,6 +49,14 @@ export default function LibrosPage() {
         .select('*')
         .order('id_libro', { ascending: false })
         .limit(5000)
+
+      // --- PRUEBA DE CONSOLA ---
+      console.log("CANTIDAD TOTAL TRAÍDA:", data?.length);
+      console.log("BUSCANDO EL LIBRO FANTASMA...");
+      const libroFantasma = data?.find(l => l.titulo.includes("Psicóloga"));
+      console.log("¿LO ENCONTRÓ EN MEMORIA?:", libroFantasma);
+      if (error) console.log("ERROR DE SUPABASE:", error);
+      // -------------------------
         
       if (!error && data) setLibros(data)
     } catch (err) {
